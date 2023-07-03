@@ -1,7 +1,5 @@
 use ethers::{
-    prelude::{
-        rand::{rngs::StdRng, Rng, SeedableRng},
-    },
+    prelude::rand::{rngs::StdRng, Rng, SeedableRng},
     providers::{Http, Ipc, Provider, ProviderExt},
 };
 use eyre::Result;
@@ -10,15 +8,16 @@ use reth_db::{
     common::KeyValue,
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
     mdbx::{
-        test_utils::{create_test_db, create_test_db_with_path},
+        test_utils::{create_test_db, ERROR_TABLE_CREATION},
         tx::Tx,
-        Env, EnvKind, WriteMap, RO, RW,
+        Env, EnvKind, Environment, EnvironmentFlags, EnvironmentKind, Geometry, Mode, PageSize,
+        SyncMode, WriteMap, RO, RW,
     },
     models::{AccountBeforeTx, StoredBlockBodyIndices},
     table::Table,
     tables,
     transaction::{DbTx, DbTxMut},
-    DatabaseError as DbError,
+    DatabaseError as DbError, Tables,
 };
 use reth_interfaces::test_utils::generators::{
     random_block_range, random_eoa_account, random_eoa_account_range, random_transition_range,
@@ -70,10 +69,42 @@ impl Default for TestTransaction {
     }
 }
 
+const MEGABYTE: usize = 1024 * 1024;
+const GIGABYTE: usize = MEGABYTE * 1024;
+const TERABYTE: usize = GIGABYTE * 1024;
+
+pub fn create_test_db_with_path<E: EnvironmentKind>(path: &Path) -> Env<E> {
+    let env = Env {
+        inner: Environment::new()
+            .set_max_dbs(Tables::ALL.len())
+            .set_geometry(Geometry {
+                // Maximum database size of 4 terabytes
+                size: Some(0..(4 * TERABYTE)),
+                // We grow the database in increments of 4 gigabytes
+                growth_step: Some(MEGABYTE as isize),
+                // The database never shrinks
+                shrink_threshold: None,
+                page_size: Some(PageSize::Set(4096)),
+            })
+            .set_flags(EnvironmentFlags {
+                mode: Mode::ReadWrite { sync_mode: SyncMode::Durable },
+                // We disable readahead because it improves performance for linear scans, but
+                // worsens it for random access (which is our access pattern outside of sync)
+                no_rdahead: true,
+                coalesce: true,
+                ..Default::default()
+            })
+            .open(path)
+            .unwrap(),
+    };
+    env.create_tables().expect(ERROR_TABLE_CREATION);
+    env
+}
+
 #[allow(dead_code)]
 impl TestTransaction {
     pub fn new(path: &Path) -> Self {
-        let tx = Arc::new(create_test_db_with_path::<WriteMap>(EnvKind::RW, path));
+        let tx = Arc::new(create_test_db_with_path::<WriteMap>(path));
         Self {
             tx: tx.clone(),
             path: Some(path.to_path_buf()),

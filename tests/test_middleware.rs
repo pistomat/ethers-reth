@@ -2,7 +2,7 @@
 mod test_utils;
 
 mod tests {
-    use crate::test_utils::{init_testdata, spawn_http_provider, TestDb};
+    use crate::test_utils::{init_testdata, spawn_http_provider, spawn_ipc_provider, TestDb};
 
     use ethers::{
         prelude::Lazy,
